@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phonalign"
+version = "0.1.0"
+description = "Audio-to-phoneme forced alignment tool for TTS dataset preprocessing (VITS, FastSpeech2, ...)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Danny" }]
+keywords = ["tts", "forced-alignment", "phoneme", "speech", "vits"]
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.35",
+    "phonemizer>=3.2",
+    "espeakng-loader",
+    "epitran>=1.24",
+    "laonlp>=1.0",
+    "praatio>=6.0",
+    "numpy>=1.24",
+    "soundfile>=0.12",
+    "soxr>=0.3",
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[project.scripts]
+phonalign = "phonalign.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

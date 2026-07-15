@@ -1,0 +1,76 @@
+"""Acoustic model wrapper: wav2vec2 CTC emissions over espeak IPA phones."""
+
+from __future__ import annotations
+
+import numpy as np
+import torch
+
+MODEL_ID = "facebook/wav2vec2-lv-60-espeak-cv-ft"
+SAMPLE_RATE = 16_000
+
+
+class AcousticModel:
+    """Lazy-loaded wav2vec2 phoneme-CTC model producing log-prob emissions."""
+
+    def __init__(self, model_id: str = MODEL_ID, device: str = "cpu"):
+        self.model_id = model_id
+        if device == "cuda" and not torch.cuda.is_available():
+            device = "cpu"
+        self.device = torch.device(device)
+        self._model = None
+        self._vocab: dict[str, int] | None = None
+        self._blank_id: int | None = None
+
+    def _load(self):
+        if self._model is not None:
+            return
+        # The wav2vec2 phoneme tokenizer instantiates phonemizer/espeak on
+        # load (even though we never use its phonemize()); make sure the
+        # bundled espeak-ng library is registered first.
+        from phonalign.g2p import ensure_espeak_library
+
+        ensure_espeak_library()
+        from transformers import AutoModelForCTC, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self._model = AutoModelForCTC.from_pretrained(self.model_id).to(self.device).eval()
+        self._vocab = tokenizer.get_vocab()
+        self._blank_id = tokenizer.pad_token_id
+
+    @property
+    def vocab(self) -> dict[str, int]:
+        self._load()
+        return self._vocab
+
+    @property
+    def blank_id(self) -> int:
+        self._load()
+        return self._blank_id
+
+    @torch.inference_mode()
+    def emissions(self, waveform: np.ndarray) -> torch.Tensor:
+        """Log-prob emissions [num_frames, vocab_size] for 16 kHz mono float audio."""
+        self._load()
+        x = torch.from_numpy(np.ascontiguousarray(waveform, dtype=np.float32))
+        # wav2vec2-lv-60 was trained on zero-mean/unit-var normalized audio
+        x = (x - x.mean()) / (x.std() + 1e-7)
+        logits = self._model(x.unsqueeze(0).to(self.device)).logits[0]
+        return torch.log_softmax(logits.float(), dim=-1).cpu()
+
+
+def load_audio(path: str, target_sr: int = SAMPLE_RATE) -> tuple[np.ndarray, int, float]:
+    """Load audio as mono float32 at target_sr.
+
+    Returns (waveform, original_sample_rate, duration_seconds). Duration is
+    computed from the original file so downstream frame math matches the
+    untouched audio.
+    """
+    import soundfile as sf
+    import soxr
+
+    data, sr = sf.read(path, dtype="float32", always_2d=True)
+    mono = data.mean(axis=1)
+    duration = len(mono) / sr
+    if sr != target_sr:
+        mono = soxr.resample(mono, sr, target_sr)
+    return mono, sr, duration
